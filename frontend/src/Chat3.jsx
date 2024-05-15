@@ -1,50 +1,74 @@
 import React, { useState, useEffect, useRef } from "react";
 import io from "socket.io-client";
 
-const userId = "user123"; // Example user ID, this should be dynamically set per user session
-const socket = io("http://localhost:5000", { query: { userId } });
-
 function App() {
   const [isRecording, setIsRecording] = useState(false);
+  const [error, setError] = useState(null);
   const screenRecorderRef = useRef(null);
   const mediaRecorderRef = useRef(null);
+  const socketRef = useRef(null);
+
+  useEffect(() => {
+    const userId = localStorage.getItem("userId");
+    if (!userId) {
+      console.error("User ID not found in localStorage");
+      return;
+    }
+
+    socketRef.current = io("http://localhost:5000", { query: { userId } });
+
+    socketRef.current.on("connect_error", (err) => {
+      console.error("Connection error:", err);
+      setError("Connection error. Please check your network and try again.");
+    });
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, []);
 
   const startRecordings = async () => {
     try {
-      // Start screen recording
+      setError(null);
       const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
+        video: { width: 1280, height: 720, frameRate: 15 },
       });
       const screenRecorder = new MediaRecorder(screenStream, {
         mimeType: "video/webm",
+        videoBitsPerSecond: 600000,
       });
       screenRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          socket.emit("screen_data", event.data);
+          socketRef.current.emit("screen_data", event.data);
         }
       };
-      screenRecorder.start(1000); // Collect 1 second chunks of screen video
+      screenRecorder.start(1000);
       screenRecorderRef.current = screenRecorder;
 
-      // Start audio/video recording
       const avStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: { width: 640, height: 480, frameRate: 15 },
         audio: true,
       });
       const avRecorder = new MediaRecorder(avStream, {
         mimeType: "video/webm",
+        videoBitsPerSecond: 600000,
       });
       avRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          socket.emit("video_data", event.data);
+          socketRef.current.emit("video_data", event.data);
         }
       };
-      avRecorder.start(1000); // Collect 1 second chunks of AV
+      avRecorder.start(1000);
       mediaRecorderRef.current = avRecorder;
 
       setIsRecording(true);
     } catch (error) {
       console.error("Error starting recordings:", error);
+      setError(
+        "Error starting recordings. Please check your permissions and try again."
+      );
     }
   };
 
@@ -64,7 +88,7 @@ function App() {
       mediaRecorderRef.current = null;
     }
     setIsRecording(false);
-    socket.emit("stop_recording");
+    socketRef.current.emit("stop_recording");
   };
 
   return (
@@ -72,6 +96,7 @@ function App() {
       <button onClick={isRecording ? stopRecordings : startRecordings}>
         {isRecording ? "Stop Recordings" : "Start Recordings"}
       </button>
+      {error && <p style={{ color: "red" }}>{error}</p>}
     </div>
   );
 }
